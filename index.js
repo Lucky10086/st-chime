@@ -1,76 +1,73 @@
 /**
- * 这是一个极简但极其稳健的 SillyTavern 插件，用于捕获最终的AI消息对象。
+ * SillyTavern onSuccess Data Capture Plugin
  *
- * 它解决了核心问题：插件脚本执行时，SillyTavern 的核心对象（如 eventSource）可能尚未初始化。
+ * This plugin correctly intercepts the raw `data` object received by the core
+ * `onSuccess(data)` function in SillyTavern's main script.
  *
- * 解决方案：我们不立即执行，而是使用一个轮询器（setInterval）来反复检查，
- * 直到所有需要的对象都已在全局作用域中定义，然后再绑定我们的事件监听器。
+ * How it works:
+ * 1. The core `onSuccess` function is not immediately global. It is assigned to
+ *    `window.onSuccess` inside a `$(document).ready()` block in script.js.
+ * 2. This plugin waits until `window.onSuccess` has been defined.
+ * 3. Once available, it "monkey-patches" the function: it saves the original
+ *    function, then replaces `window.onSuccess` with a new function.
+ * 4. This new function first logs the raw `data` object to the console (achieving our goal)
+ *    and then calls the original `onSuccess` function with the same data, ensuring
+ *    that SillyTavern continues to operate normally.
  */
 (function () {
-    const PLUGIN_NAME = "[最终数据捕获插件]";
-    const MAX_WAIT_TIME = 15000; // 等待15秒，如果还没找到就放弃
-    const POLL_INTERVAL = 100;   // 每100毫秒检查一次
+    const PLUGIN_NAME = "[onSuccess Data Capture Plugin]";
+    const MAX_WAIT_TIME = 20000; // Wait a maximum of 20 seconds
+    const POLL_INTERVAL = 100;   // Check every 100ms
 
     let totalWaitTime = 0;
 
-    console.log(`${PLUGIN_NAME} 已加载，开始等待 SillyTavern 核心对象...`);
+    console.log(`${PLUGIN_NAME} Loaded. Waiting for 'window.onSuccess' to become available...`);
 
-    // 启动轮询器
+    // We must wait for the main script.js to finish its setup and assign onSuccess to the window.
     const readyCheckInterval = setInterval(() => {
-        // 检查所有我们需要的全局对象是否存在
-        if (typeof window.eventSource !== 'undefined' &&
-            typeof window.event_types !== 'undefined' &&
-            typeof window.getContext === 'function') {
-
-            // 找到了！
-            clearInterval(readyCheckInterval); // 停止轮询
-            console.log(`${PLUGIN_NAME} 成功找到核心对象，开始初始化。`);
-            initializePlugin();
-
+        if (typeof window.onSuccess === 'function') {
+            // Success! The function is now global.
+            clearInterval(readyCheckInterval);
+            patchOnSuccess();
         } else {
-            // 还没找到，继续等待
+            // Not ready yet, check again later.
             totalWaitTime += POLL_INTERVAL;
             if (totalWaitTime >= MAX_WAIT_TIME) {
-                clearInterval(readyCheckInterval); // 超时，停止轮询
-                console.error(`${PLUGIN_NAME} 错误：等待超时。无法在全局作用域中找到 eventSource, event_types, 或 getContext。插件无法工作。`);
+                clearInterval(readyCheckInterval);
+                console.error(`${PLUGIN_NAME} Error: Timed out waiting for 'window.onSuccess'. The plugin will not run.`);
             }
         }
     }, POLL_INTERVAL);
 
-    /**
-     * 当所有核心对象都准备好后，执行这个函数
-     */
-    function initializePlugin() {
-        // 监听正确的事件：CHARACTER_MESSAGE_RENDERED
-        // 这个事件在消息被完全处理并准备好渲染时触发
-        window.eventSource.on(window.event_types.CHARACTER_MESSAGE_RENDERED, (chat_id) => {
+
+    function patchOnSuccess() {
+        console.log(`${PLUGIN_NAME} 'window.onSuccess' found. Applying interceptor.`);
+
+        // 1. Store a reference to the original function
+        const originalOnSuccess = window.onSuccess;
+
+        // 2. Overwrite the global function with our new async wrapper function
+        window.onSuccess = async function(data) {
+            // 3. This is the moment! We have captured the raw data.
+            console.groupCollapsed(
+                `%c${PLUGIN_NAME} Intercepted raw 'onSuccess(data)' object!`,
+                "background-color: #8E44AD; color: white; padding: 4px 8px; border-radius: 4px; font-weight: bold;"
+            );
+            console.log("%cThis is the unprocessed data object directly from the API response.", "font-style: italic;");
+            console.log(data); // <--- THIS IS YOUR DATA!
+            console.groupEnd();
+
+            // 4. CRITICAL: Call the original function with the original arguments and context.
+            // We must 'await' and 'return' the result to not break SillyTavern's async flow.
             try {
-                // 使用全局的 getContext() 函数和收到的 chat_id 来获取完整的消息对象
-                const chatContext = window.getContext();
-                const messageObject = chatContext.chat[chat_id];
-
-                if (!messageObject) {
-                    console.error(`${PLUGIN_NAME} 错误：无法根据 chat_id ${chat_id} 找到消息对象。`);
-                    return;
-                }
-
-                // 打印我们成功捕获到的对象
-                console.groupCollapsed(
-                    `%c${PLUGIN_NAME} 成功捕获到新消息对象！ (ID: ${chat_id})`,
-                    "background-color: #4CAF50; color: white; padding: 4px 8px; border-radius: 4px; font-weight: bold;"
-                );
-                console.log("%c这个对象是 onSuccess(data) 处理完毕后，最终存入聊天状态的数据结构。", "font-style: italic;");
-                console.log("--- 捕获到的最终消息对象 ---");
-                console.log(messageObject);
-                console.log("-------------------------------------");
-                console.groupEnd();
-
+                return await originalOnSuccess.apply(this, arguments);
             } catch (error) {
-                console.error(`${PLUGIN_NAME} 在处理事件时发生错误:`, error);
+                console.error(`${PLUGIN_NAME} An error occurred while executing the original onSuccess function:`, error);
+                // Re-throw the error so SillyTavern's own error handling can catch it.
+                throw error;
             }
-        });
+        };
 
-        console.log(`${PLUGIN_NAME} 初始化完成，已成功绑定到 CHARACTER_MESSAGE_RENDERED 事件。`);
+        console.log(`${PLUGIN_NAME} Interceptor applied successfully. Ready to capture data.`);
     }
-
-})(); // 使用立即执行函数表达式 (IIFE) 来避免污染全局作用域
+})();
