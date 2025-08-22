@@ -1,13 +1,13 @@
 {
-    "display_name": "更多提醒铃声",
+    "display_name": "自动重试",
     "loading_order": 100,
     "requires": [],
     "optional": [],
     "js": "index.js",
     "css": "style.css",
     "author": "404nyaFound",
-    "version": "1.0.1",
-    "homePage": "https://github.com/404nyaFound",
+    "version": "1.0.2",
+    "homePage": "https://github.com/Lucky10086/st-chime",
     "auto_update": true,
     "assets": [
         "/assets/default/true.mp3",
