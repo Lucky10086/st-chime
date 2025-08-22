@@ -1,0 +1,36 @@
+{
+    "name": "Enhanced Auto-Retry",
+    "description": "专注处理网络请求超时、API错误、JS异常等问题，并自动重试。移植自广受欢迎的同名油猴脚本 v2.0。",
+    "version": "1.0.0",
+    "author": "UserScript Developer (Ported to ST by You)",
+    "settings": [
+        {
+            "id": "max_fails",
+            "name": "最大失败次数 (Max Fails)",
+            "type": "number",
+            "default_value": 4,
+            "description": "在停止自动重试前，允许连续失败的最大次数。"
+        },
+        {
+            "id": "retry_delay",
+            "name": "重试延迟 (ms, Retry Delay)",
+            "type": "number",
+            "default_value": 5000,
+            "description": "点击“重新生成”按钮后，等待下一次操作的延迟时间（毫秒）。"
+        },
+        {
+            "id": "request_timeout",
+            "name": "请求超时 (ms, Request Timeout)",
+            "type": "number",
+            "default_value": 160000,
+            "description": "API请求被视为超时并触发重试的时间（毫秒）。"
+        },
+        {
+            "id": "target_api_url",
+            "name": "目标API路径 (Target API URL)",
+            "type": "text",
+            "default_value": "/api/generate",
+            "description": "需要监控和重试的API请求路径。SillyTavern默认为 /api/generate。"
+        }
+    ]
+}
