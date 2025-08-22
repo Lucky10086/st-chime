@@ -1,43 +1,55 @@
-// 导入与 Chime 插件完全相同的核心对象
-import { eventSource, event_types } from "../../../../script.js";
+// 导入 script.js 导出的所有内容，并将其命名为 MainScript
+import * as MainScript from "../../../../script.js";
 
 /**
- * 这是一个极简的插件，其唯一目的是捕获并打印 MESSAGE_RECEIVED 事件的数据。
+ * 这是一个“函数补丁”插件。
+ * 它直接访问从 script.js 导入的模块，并修改其内部的 updateTokens 函数，
+ * 以便在不破坏其原有功能的情况下，拦截并打印出 prompts 参数。
  */
-const DataCapturePlugin = {
-
-    /**
-     * 这是我们的事件处理函数。
-     * 当 MESSAGE_RECEIVED 事件触发时，它会自动被调用，并接收到包含所有回复内容的数据。
-     * @param {any} data - 这就是我们梦寐以求的数据！
-     */
-    logMessageData(data) {
-        console.groupCollapsed("%c[数据捕获插件] 成功捕获到新消息数据！", "background-color: #28a745; color: white; padding: 4px 8px; border-radius: 4px;");
-        console.log("--- 捕获到的原始数据对象 (这就是 onSuccess 的 data) ---");
-        console.log(data); // <--- 这里就是最终的数据！
-        console.log("--------------------------------------------------");
-        console.groupEnd();
-    },
+const FunctionPatcherPlugin = {
 
     /**
      * 插件的初始化入口。
      */
     init() {
-        // 使用 jQuery(document).ready 来确保在 DOM 加载完毕后执行，
-        // 此时 eventSource 和 event_types 肯定已经可用。
+        // 使用 jQuery(document).ready 确保在所有脚本都已加载和解析后执行
         jQuery(async () => {
-            // 检查核心对象是否存在，以防万一
-            if (typeof eventSource !== 'undefined' && typeof event_types !== 'undefined') {
-                console.log("[数据捕获插件] 核心事件源已找到，正在绑定监听器...");
+            console.log("[函数补丁插件] 插件已启动，正在查找 updateTokens 函数...");
 
-                // 绑定我们的处理函数到 MESSAGE_RECEIVED 事件上
-                eventSource.on(event_types.MESSAGE_RECEIVED, this.logMessageData.bind(this));
+            // 打印出我们从 script.js 导入的所有东西，方便调试
+            console.log("[函数补丁插件] 从 script.js 模块中导入的内容:", MainScript);
+
+            // 检查 MainScript 对象中是否存在一个名为 'updateTokens' 的函数
+            if (MainScript && typeof MainScript.updateTokens === 'function') {
+                console.log("%c[函数补丁插件] 成功找到 updateTokens 函数！正在应用补丁...", "color: #007bff; font-weight: bold;");
+
+                // 1. 保存原始的 updateTokens 函数的引用
+                const originalUpdateTokens = MainScript.updateTokens;
+
+                // 2. 用我们自己的新函数覆盖掉模块中的 updateTokens
+                MainScript.updateTokens = function(prompts, type) {
+                    
+                    // --- 这是我们植入的核心逻辑 ---
+                    // 3. 检查类型是否是我们想要的 'receive'
+                    if (type === 'receive') {
+                        console.groupCollapsed("%c[函数补丁插件] 成功拦截到 'receive' 数据！", "background-color: #28a745; color: white; padding: 4px 8px; border-radius: 4px;");
+                        console.log("--- 捕获到的 prompts 原始内容 ---");
+                        console.log(prompts); // <--- 这就是您最终想要的完整数据！
+                        console.log("------------------------------------");
+                        console.groupEnd();
+                    }
+                    
+                    // 4. 调用原始的 updateTokens 函数，并把参数原封不动地传进去
+                    //    这样可以确保计算 tokens、更新UI等原有功能完全不受影响
+                    return originalUpdateTokens.apply(this, arguments);
+                };
+
             } else {
-                console.error("[数据捕获插件] 错误：无法找到 eventSource 或 event_types 对象。插件无法工作。");
+                console.error("[函数补丁插件] 错误：在 script.js 模块中未找到名为 'updateTokens' 的导出函数。");
             }
         });
     }
 };
 
 // 运行插件
-DataCapturePlugin.init();
+FunctionPatcherPlugin.init();
