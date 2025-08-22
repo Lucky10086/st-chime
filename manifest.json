@@ -1,9 +1,10 @@
 {
     "display_name": "Enhanced Auto-Retry",
     "description": "专注处理网络请求超时、API错误等问题，并自动重试。移植自广受欢迎的同名油猴脚本 v2.0。",
-    "version": "1.0.1",
+    "version": "1.0.3",
     "author": "UserScript Developer (Ported for ST)",
     "js": "script.js",
+    "homePage": "https://github.com/Lucky10086/st-chime",
     "settings": [
         {
             "id": "max_fails",
