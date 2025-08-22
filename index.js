@@ -1,51 +1,56 @@
-// 导入与 Chime 插件完全相同的核心对象
-import { eventSource, event_types } from "../../../../script.js";
-
 /**
- * 这是一个插件，其目的是捕获并打印在 script.js 中 onSuccess 函数接收到的 `data` 对象。
- * 它通过监听 MESSAGE_RECEIVED 事件来实现，该事件正是由 onSuccess 触发并传递数据的。
+ * 这是一个通过“猴子补丁”技术捕获 script.js 中 onSuccess 函数数据的插件。
+ * 它会直接拦截对 onSuccess 函数的调用，记录其参数，然后再执行原始函数。
  */
-const DataCaptureForOnSuccessPlugin = {
-
-    /**
-     * 这是我们的事件处理函数。
-     * 当 MESSAGE_RECEIVED 事件触发时（通常是在 onSuccess 函数内部），它会被调用。
-     * @param {any} data - 这就是从 onSuccess 函数传递过来的数据对象。
-     */
-    logOnSuccessData(data) {
-        console.groupCollapsed(
-            "%c[onSuccess 数据捕获插件] 成功捕获到 onSuccess 的 data！",
-            "background-color: #28a745; color: white; padding: 4px 8px; border-radius: 4px; font-weight: bold;"
-        );
-        console.log("%c这个数据对象正是在 script.js 的 onSuccess(data) 函数中接收和处理的那个。", "font-style: italic;");
-        console.log("--- 捕获到的原始 data 对象 ---");
-        console.log(data); // <--- 这里就是最终您想要的数据！
-        console.log("-------------------------------------");
-        console.groupEnd();
-    },
+const OnSuccessInterceptorPlugin = {
 
     /**
      * 插件的初始化入口。
      */
     init() {
         // 使用 jQuery(document).ready 来确保在 DOM 加载完毕后执行，
-        // 此时 eventSource 和 event_types 肯定已经可用。
-        jQuery(async () => {
-            // 检查核心对象是否存在
-            if (typeof eventSource !== 'undefined' && typeof event_types !== 'undefined') {
-                console.log("[onSuccess 数据捕获插件] 核心事件源已找到，正在绑定监听器...");
+        // 此时全局作用域中的 onSuccess 函数肯定已经定义好了。
+        jQuery(() => {
+            // 检查原始的 onSuccess 函数是否存在于全局作用域中
+            if (typeof window.onSuccess === 'function') {
+                console.log("[onSuccess 拦截插件] 发现原始 onSuccess 函数，准备进行包装...");
 
-                // 绑定我们的处理函数到 MESSAGE_RECEIVED 事件上。
-                // 这个事件携带了 onSuccess 函数的数据。
-                eventSource.on(event_types.MESSAGE_RECEIVED, this.logOnSuccessData.bind(this));
+                // 1. 保存对原始函数的引用
+                const originalOnSuccess = window.onSuccess;
 
-                console.log("[onSuccess 数据捕获插件] 监听器已绑定v1。等待新消息...");
+                // 2. 用我们自己的异步函数覆盖全局的 onSuccess
+                window.onSuccess = async function(data) {
+                    // 3. 在这里，我们成功拦截到了 data！现在可以为所欲为。
+                    console.groupCollapsed(
+                        "%c[onSuccess 拦截插件] 成功拦截到 onSuccess(data) 的调用！",
+                        "background-color: #9933cc; color: white; padding: 4px 8px; border-radius: 4px; font-weight: bold;"
+                    );
+                    console.log("%c这个数据对象正是在 script.js 的 onSuccess(data) 函数被调用时传入的原始参数。", "font-style: italic;");
+                    console.log("--- 捕获到的原始 data 对象 ---");
+                    console.log(data); // <--- 这里就是您梦寐以求的 data 对象！
+                    console.log("-------------------------------------");
+                    console.groupEnd();
+
+                    // 4. 执行原始的 onSuccess 函数，并将参数和 `this` 上下文原封不动地传给它。
+                    //    使用 .apply(this, arguments) 是最稳妥的方式。
+                    //    我们必须 `await` 并 `return` 它的结果，以确保不会破坏程序的异步流程。
+                    try {
+                        return await originalOnSuccess.apply(this, arguments);
+                    } catch (error) {
+                        console.error("[onSuccess 拦截插件] 在执行原始 onSuccess 函数时发生错误:", error);
+                        // 即使原始函数出错，也要重新抛出错误，以便程序的其他部分能够捕获它。
+                        throw error;
+                    }
+                };
+
+                console.log("[onSuccess 拦截插件] 包装完成。现在将自动捕获所有生成的消息数据。");
+
             } else {
-                console.error("[onSuccess 数据捕获插件] 错误：无法找到 eventSource 或 event_types 对象。插件无法工作。");
+                console.error("[onSuccess 拦截插件] 错误：无法在全局作用域 (window) 中找到 onSuccess 函数。插件无法工作。");
             }
         });
     }
 };
 
 // 运行插件
-DataCaptureForOnSuccessPlugin.init();
+OnSuccessInterceptorPlugin.init();
