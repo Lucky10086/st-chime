@@ -39,7 +39,7 @@ const DataCaptureForOnSuccessPlugin = {
                 // 这个事件携带了 onSuccess 函数的数据。
                 eventSource.on(event_types.MESSAGE_RECEIVED, this.logOnSuccessData.bind(this));
 
-                console.log("[onSuccess 数据捕获插件] 监听器已绑定。等待新消息...");
+                console.log("[onSuccess 数据捕获插件] 监听器已绑定v1。等待新消息...");
             } else {
                 console.error("[onSuccess 数据捕获插件] 错误：无法找到 eventSource 或 event_types 对象。插件无法工作。");
             }
