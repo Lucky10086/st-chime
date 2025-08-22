@@ -1,56 +1,70 @@
 /**
- * 这是一个通过“猴子补丁”技术捕获 script.js 中 onSuccess 函数数据的插件。
- * 它会直接拦截对 onSuccess 函数的调用，记录其参数，然后再执行原始函数。
+ * 这是一个最终版的插件，旨在通过正确的方式捕获 onSuccess 函数处理后生成的最终消息对象。
+ * 它通过监听正确的 `CHARACTER_MESSAGE_RENDERED` 事件，并使用收到的 `chat_id` 从主聊天上下文中获取数据。
+ *
+ * 假设：此插件的运行环境与您提供的“记忆插件”相同，可以访问到核心的全局变量
+ * `eventSource`, `event_types`, 和 `getContext`。
  */
-const OnSuccessInterceptorPlugin = {
+const FinalDataCapturePlugin = {
+
+    /**
+     * 这是我们的事件处理函数。
+     * 当一条新消息被完全处理并准备好渲染时，该函数会被调用。
+     * @param {number} chat_id - 这是新消息在 `getContext().chat` 数组中的索引。
+     */
+    logFinalMessageObject(chat_id) {
+        try {
+            // 检查 chat_id 是否有效
+            if (chat_id === null || chat_id === undefined || typeof getContext !== 'function') {
+                console.warn("[最终数据捕获插件] 收到的 chat_id 无效或无法访问 getContext()。");
+                return;
+            }
+
+            // 使用全局的 getContext() 函数和收到的 chat_id 来获取完整的消息对象
+            const chatContext = getContext();
+            const messageObject = chatContext.chat[chat_id];
+
+            if (!messageObject) {
+                console.error(`[最终数据捕获插件] 错误：无法根据 chat_id ${chat_id} 找到消息对象。`);
+                return;
+            }
+
+            // 打印我们成功捕获到的对象
+            console.groupCollapsed(
+                "%c[最终数据捕获插件] 成功捕获到最终消息对象！",
+                "background-color: #28a745; color: white; padding: 4px 8px; border-radius: 4px; font-weight: bold;"
+            );
+            console.log("%c这个对象是 onSuccess(data) 处理完毕后，最终存入聊天状态的数据结构。", "font-style: italic;");
+            console.log("--- 捕获到的最终消息对象 ---");
+            console.log(messageObject); // <--- 这里就是包含了所有最终信息的数据！
+            console.log("-------------------------------------");
+            console.groupEnd();
+
+        } catch (error) {
+            console.error("[最终数据捕获插件] 在处理事件时发生错误:", error);
+        }
+    },
 
     /**
      * 插件的初始化入口。
      */
     init() {
-        // 使用 jQuery(document).ready 来确保在 DOM 加载完毕后执行，
-        // 此时全局作用域中的 onSuccess 函数肯定已经定义好了。
-        jQuery(() => {
-            // 检查原始的 onSuccess 函数是否存在于全局作用域中
-            if (typeof window.onSuccess === 'function') {
-                console.log("[onSuccess 拦截插件] 发现原始 onSuccess 函数，准备进行包装...");
+        // 使用 jQuery(document).ready 确保 DOM 和核心脚本已加载完毕
+        jQuery(async () => {
+            // 检查核心对象是否在全局作用域中可用
+            if (typeof eventSource !== 'undefined' && typeof event_types !== 'undefined') {
+                console.log("[最终数据捕获插件] 核心事件系统已找到，正在绑定监听器...");
 
-                // 1. 保存对原始函数的引用
-                const originalOnSuccess = window.onSuccess;
+                // 监听正确的事件：CHARACTER_MESSAGE_RENDERED
+                eventSource.on(event_types.CHARACTER_MESSAGE_RENDERED, this.logFinalMessageObject.bind(this));
 
-                // 2. 用我们自己的异步函数覆盖全局的 onSuccess
-                window.onSuccess = async function(data) {
-                    // 3. 在这里，我们成功拦截到了 data！现在可以为所欲为。
-                    console.groupCollapsed(
-                        "%c[onSuccess 拦截插件] 成功拦截到 onSuccess(data) 的调用！",
-                        "background-color: #9933cc; color: white; padding: 4px 8px; border-radius: 4px; font-weight: bold;"
-                    );
-                    console.log("%c这个数据对象正是在 script.js 的 onSuccess(data) 函数被调用时传入的原始参数。", "font-style: italic;");
-                    console.log("--- 捕获到的原始 data 对象 ---");
-                    console.log(data); // <--- 这里就是您梦寐以求的 data 对象！
-                    console.log("-------------------------------------");
-                    console.groupEnd();
-
-                    // 4. 执行原始的 onSuccess 函数，并将参数和 `this` 上下文原封不动地传给它。
-                    //    使用 .apply(this, arguments) 是最稳妥的方式。
-                    //    我们必须 `await` 并 `return` 它的结果，以确保不会破坏程序的异步流程。
-                    try {
-                        return await originalOnSuccess.apply(this, arguments);
-                    } catch (error) {
-                        console.error("[onSuccess 拦截插件] 在执行原始 onSuccess 函数时发生错误:", error);
-                        // 即使原始函数出错，也要重新抛出错误，以便程序的其他部分能够捕获它。
-                        throw error;
-                    }
-                };
-
-                console.log("[onSuccess 拦截插件] 包装完成。现在将自动捕获所有生成的消息数据。");
-
+                console.log("[最终数据捕获插件] 监听器已成功绑定到 CHARACTER_MESSAGE_RENDERED 事件。");
             } else {
-                console.error("[onSuccess 拦截插件] 错误：无法在全局作用域 (window) 中找到 onSuccess 函数。插件无法工作。");
+                console.error("[最终数据捕获插件] 错误：无法在全局作用域中找到 eventSource 或 event_types 对象。插件无法工作。");
             }
         });
     }
 };
 
 // 运行插件
-OnSuccessInterceptorPlugin.init();
+FinalDataCapturePlugin.init();
