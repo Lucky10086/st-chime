@@ -1,55 +1,51 @@
-// 导入 script.js 导出的所有内容，并将其命名为 MainScript
-import * as MainScript from "../../../../script.js";
+// 导入与 Chime 插件完全相同的核心对象
+import { eventSource, event_types } from "../../../../script.js";
 
 /**
- * 这是一个“函数补丁”插件。
- * 它直接访问从 script.js 导入的模块，并修改其内部的 updateTokens 函数，
- * 以便在不破坏其原有功能的情况下，拦截并打印出 prompts 参数。
+ * 这是一个插件，其目的是捕获并打印在 script.js 中 onSuccess 函数接收到的 `data` 对象。
+ * 它通过监听 MESSAGE_RECEIVED 事件来实现，该事件正是由 onSuccess 触发并传递数据的。
  */
-const FunctionPatcherPlugin = {
+const DataCaptureForOnSuccessPlugin = {
+
+    /**
+     * 这是我们的事件处理函数。
+     * 当 MESSAGE_RECEIVED 事件触发时（通常是在 onSuccess 函数内部），它会被调用。
+     * @param {any} data - 这就是从 onSuccess 函数传递过来的数据对象。
+     */
+    logOnSuccessData(data) {
+        console.groupCollapsed(
+            "%c[onSuccess 数据捕获插件] 成功捕获到 onSuccess 的 data！",
+            "background-color: #28a745; color: white; padding: 4px 8px; border-radius: 4px; font-weight: bold;"
+        );
+        console.log("%c这个数据对象正是在 script.js 的 onSuccess(data) 函数中接收和处理的那个。", "font-style: italic;");
+        console.log("--- 捕获到的原始 data 对象 ---");
+        console.log(data); // <--- 这里就是最终您想要的数据！
+        console.log("-------------------------------------");
+        console.groupEnd();
+    },
 
     /**
      * 插件的初始化入口。
      */
     init() {
-        // 使用 jQuery(document).ready 确保在所有脚本都已加载和解析后执行
+        // 使用 jQuery(document).ready 来确保在 DOM 加载完毕后执行，
+        // 此时 eventSource 和 event_types 肯定已经可用。
         jQuery(async () => {
-            console.log("[函数补丁插件] 插件已启动，正在查找 updateTokens 函数...");
+            // 检查核心对象是否存在
+            if (typeof eventSource !== 'undefined' && typeof event_types !== 'undefined') {
+                console.log("[onSuccess 数据捕获插件] 核心事件源已找到，正在绑定监听器...");
 
-            // 打印出我们从 script.js 导入的所有东西，方便调试
-            console.log("[函数补丁插件] 从 script.js 模块中导入的内容:", MainScript);
+                // 绑定我们的处理函数到 MESSAGE_RECEIVED 事件上。
+                // 这个事件携带了 onSuccess 函数的数据。
+                eventSource.on(event_types.MESSAGE_RECEIVED, this.logOnSuccessData.bind(this));
 
-            // 检查 MainScript 对象中是否存在一个名为 'updateTokens' 的函数
-            if (MainScript && typeof MainScript.updateTokens === 'function') {
-                console.log("%c[函数补丁插件] 成功找到 updateTokens 函数！正在应用补丁...", "color: #007bff; font-weight: bold;");
-
-                // 1. 保存原始的 updateTokens 函数的引用
-                const originalUpdateTokens = MainScript.updateTokens;
-
-                // 2. 用我们自己的新函数覆盖掉模块中的 updateTokens
-                MainScript.updateTokens = function(prompts, type) {
-                    
-                    // --- 这是我们植入的核心逻辑 ---
-                    // 3. 检查类型是否是我们想要的 'receive'
-                    if (type === 'receive') {
-                        console.groupCollapsed("%c[函数补丁插件] 成功拦截到 'receive' 数据！", "background-color: #28a745; color: white; padding: 4px 8px; border-radius: 4px;");
-                        console.log("--- 捕获到的 prompts 原始内容 ---");
-                        console.log(prompts); // <--- 这就是您最终想要的完整数据！
-                        console.log("------------------------------------");
-                        console.groupEnd();
-                    }
-                    
-                    // 4. 调用原始的 updateTokens 函数，并把参数原封不动地传进去
-                    //    这样可以确保计算 tokens、更新UI等原有功能完全不受影响
-                    return originalUpdateTokens.apply(this, arguments);
-                };
-
+                console.log("[onSuccess 数据捕获插件] 监听器已绑定。等待新消息...");
             } else {
-                console.error("[函数补丁插件] 错误：在 script.js 模块中未找到名为 'updateTokens' 的导出函数。");
+                console.error("[onSuccess 数据捕获插件] 错误：无法找到 eventSource 或 event_types 对象。插件无法工作。");
             }
         });
     }
 };
 
 // 运行插件
-FunctionPatcherPlugin.init();
+DataCaptureForOnSuccessPlugin.init();
