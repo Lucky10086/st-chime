@@ -1,83 +1,98 @@
 /**
- * SillyTavern - onSuccess 原始数据捕获插件 (事件驱动最终版)
+ * SillyTavern - 自动重生成不完整回复插件
  *
  * 核心思路：
- * 1. 完全采纳用户的正确思路：抛弃不稳定的定时器，使用可靠的事件驱动模型。
- * 2. 使用已被证明可以被 SillyTavern 成功加载的插件结构作为基础。
- * 3. 监听一个在应用初始化后期才会触发的关键事件：`CHARACTER_LOADED`。
- * 4. 当 `CHARACTER_LOADED` 事件被触发时，我们知道此时 `window.onSuccess` 必定已经准备就绪。
- * 5. 在该事件的处理函数中，执行一次性的“猴子补丁”操作，以拦截 `onSuccess` 的数据。
+ * 1. 使用事件驱动模型，监听 `CHARACTER_MESSAGE_RENDERED` 事件。
+ * 2. 在事件触发后，调用 `globalThis.SillyTavern.getContext()` 获取最新消息。
+ * 3. 通过一个可自定义的 `isMessageIncomplete` 函数来判断消息是否需要重生成。
+ * 4. 如果需要，则调用全局的 `regenerateLastMessage()` 函数。
  */
 
-// 保留此 import 以确保插件加载方式的正确性。
+// 按照标准插件格式，我们保留 import 语句
 import { eventSource, event_types } from "../../../../script.js";
 
-const DataCaptureEventDrivenPlugin = {
-    // 添加一个标志位，确保我们的拦截逻辑只执行一次。
-    isInitialized: false,
+const AutoRegeneratePlugin = {
 
     /**
-     * 插件的初始化入口。
+     * 插件初始化入口
      */
     init() {
-        // 使用 jQuery(document).ready 是一个好习惯，确保 DOM 结构已加载。
         jQuery(() => {
-            const PLUGIN_NAME = "[事件驱动数据捕获插件]";
+            const PLUGIN_NAME = "[自动重生成插件]";
 
-            // 检查核心事件对象是否存在，以防万一。
             if (typeof eventSource !== 'undefined' && typeof event_types !== 'undefined') {
-                console.log(`${PLUGIN_NAME} 初始化成功。正在监听 '角色加载完成' 事件...`);
-                
-                // 绑定我们的处理函数到 CHARACTER_LOADED 事件上。
-                // 当角色加载完毕，应用准备就绪时，这个函数就会被调用。
-                eventSource.on(event_types.CHARACTER_LOADED, this.onCharacterLoaded.bind(this));
+                console.log(`${PLUGIN_NAME} 初始化成功，正在监听新消息...`);
+                // 监听 AI 消息渲染完成事件
+                eventSource.on(event_types.CHARACTER_MESSAGE_RENDERED, this.onMessageRendered.bind(this));
             } else {
-                console.error(`${PLUGIN_NAME} 错误：无法找到 eventSource 或 event_types 对象。插件无法工作。`);
+                console.error(`${PLUGIN_NAME} 错误：核心事件系统未找到，插件无法工作。`);
             }
         });
     },
 
     /**
-     * 当 'CHARACTER_LOADED' 事件触发时，此函数被调用。
-     * 这是我们执行拦截操作的最佳时机。
+     * 当AI消息渲染完成时被调用
      */
-    onCharacterLoaded() {
-        const PLUGIN_NAME = "[事件驱动数据捕获插件]";
+    async onMessageRendered() {
+        const PLUGIN_NAME = "[自动重生成插件]";
+        
+        try {
+            // 使用您提供的正确方法获取上下文
+            const context = globalThis.SillyTavern.getContext();
+            
+            // 获取聊天记录的最后一条消息
+            const lastMessage = context.chat[context.chat.length - 1];
 
-        // 使用标志位，确保无论事件触发多少次，我们的核心逻辑只运行一次。
-        if (this.isInitialized) {
-            return;
+            // 确保最后一条消息存在并且是来自AI的
+            if (!lastMessage || lastMessage.is_user) {
+                return;
+            }
+
+            const messageText = lastMessage.mes;
+            console.log(`${PLUGIN_NAME} 收到新消息，正在检查内容...`);
+            
+            // 使用我们的检查函数进行判断
+            if (this.isMessageIncomplete(messageText)) {
+                console.warn(`${PLUGIN_NAME} 检测到不完整的回复，将在1秒后触发自动重生成...`);
+                console.warn(`不完整的回复内容: "${messageText}"`);
+
+                // 等待一小段时间，避免操作过快
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                
+                // 检查重新生成函数是否存在
+                if (typeof regenerateLastMessage === 'function') {
+                    regenerateLastMessage();
+                } else {
+                    console.error(`${PLUGIN_NAME} 错误：无法找到 'regenerateLastMessage' 函数。`);
+                }
+            } else {
+                console.log(`${PLUGIN_NAME} 消息内容完整，无需操作。`);
+            }
+
+        } catch (error) {
+            console.error(`${PLUGIN_NAME} 在处理消息时发生错误:`, error);
         }
-        this.isInitialized = true; // 设置标志位，防止重复执行
+    },
 
-        console.log(`${PLUGIN_NAME} '角色加载完成' 事件已触发。开始拦截 'onSuccess' 函数...`);
+    /**
+     * 【【【 在这里定义您的规则！ 】】】
+      * @param {string} message - AI回复的文本内容。
+     * @returns {boolean} - 如果消息不完整，返回 true；否则返回 false。
+     */
+    isMessageIncomplete(message) {
+        // 定义您的正则表达式规则。
+        // /<\/content>.*<\/tableEdit>/s 的含义是：
+        // 1. 寻找 `</content>` 标签。
+        // 2. `.*` 匹配中间的任何字符（包括换行符，因为有 `s` 标志）。
+        // 3. 寻找 `</tableEdit>` 标签。
+        const completenessPattern = /<\/game>.*<\/summary>/s;
 
-        // 在这个时间点，我们可以100%确定 window.onSuccess 已经存在。
-        if (typeof window.onSuccess === 'function') {
-            // 1. 保存对原始 `onSuccess` 函数的引用
-            const originalOnSuccess = window.onSuccess;
-
-            // 2. 用我们自己的新函数来覆盖全局的 `window.onSuccess`
-            window.onSuccess = async function(data) {
-                // 3. 拦截成功！打印捕获到的原始 data 对象
-                console.groupCollapsed(
-                    `%c${PLUGIN_NAME} 成功捕获到 'onSuccess' 的原始数据！`,
-                    "background-color: #4CAF50; color: white; padding: 4px 8px; border-radius: 4px; font-weight: bold;"
-                );
-                console.log("这是从 API 直接返回的、未经处理的原始数据对象:");
-                console.log(data); // <--- 这里就是您要的最终数据！
-                console.groupEnd();
-
-                // 4. 调用原始函数，确保 SillyTavern 正常运行。
-                return await originalOnSuccess.apply(this, arguments);
-            };
-
-            console.log(`${PLUGIN_NAME} 拦截器已成功应用。`);
-        } else {
-            console.error(`${PLUGIN_NAME} 错误：在 '角色加载完成' 后依然未能找到 'window.onSuccess' 函数。拦截失败。`);
-        }
+        // 使用 .test() 方法进行检查。
+        // 如果消息文本【不】包含这个模式，test() 会返回 false。
+        // 我们用 `!` 将其反转，因此当消息不完整时，此函数返回 true。
+        return !completenessPattern.test(message);
     }
 };
 
-// 运行插件
-DataCaptureEventDrivenPlugin.init();
+// 启动插件
+AutoRegeneratePluginFinal.init();
