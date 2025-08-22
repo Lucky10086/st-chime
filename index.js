@@ -1,88 +1,156 @@
-/**
- * SillyTavern - 自动重生成不完整回复插件 (IIFE 最终修正版)
- *
- * 修正说明：
- * - 解决了 "Uncaught ReferenceError" 的问题。
- * - 使用了 "立即执行函数表达式" (IIFE) `(function(){ ... })();` 来创建一个安全的、
- *   自包含的作用域，确保插件对象在被调用前一定已经被定义。
- * - 移除了不再需要的 import 语句，以避免潜在的模块加载冲突。
- */
-
 (function () {
-    // 将所有代码包裹在这个自执行函数中，确保作用域和执行顺序的绝对安全。
+    'use strict';
 
-    const PLUGIN_NAME = "[自动重生成插件]";
+    // --- 插件配置 ---
+    // 这些值将由 config.json 中的用户设置覆盖
+    let maxFails = 4;
+    let retryDelay = 5000;
+    let requestTimeout = 160000;
+    let targetApiUrl = "/api/generate";
 
-    const AutoRegeneratePlugin = {
-        /**
-         * 插件初始化入口
-         */
-        init() {
-            // 我们不再需要 jQuery(document).ready，因为整个脚本会在DOM加载后执行。
-            if (typeof eventSource !== 'undefined' && typeof event_types !== 'undefined') {
-                console.log(`${PLUGIN_NAME} 初始化成功，正在监听新消息...`);
-                eventSource.on(event_types.CHARACTER_MESSAGE_RENDERED, this.onMessageRendered.bind(this));
-            } else {
-                // 如果事件源还不存在，我们可以稍微等待一下
-                setTimeout(() => {
-                    if (typeof eventSource !== 'undefined' && typeof event_types !== 'undefined') {
-                         console.log(`${PLUGIN_NAME} (延迟后) 初始化成功，正在监听新消息...`);
-                         eventSource.on(event_types.CHARACTER_MESSAGE_RENDERED, this.onMessageRendered.bind(this));
-                    } else {
-                        console.error(`${PLUGIN_NAME} 错误：核心事件系统未找到，插件无法工作。`);
-                    }
-                }, 1000); // 等待1秒
-            }
-        },
+    // --- 内部状态变量 ---
+    let failCount = 0;
+    let isHandlingFailure = false; // 防调用风暴的状态锁
 
-        /**
-         * 当AI消息渲染完成时被调用
-         */
-        async onMessageRendered() {
-            try {
-                // globalThis.SillyTavern.getContext() 是更现代和安全的写法
-                const context = globalThis.SillyTavern.getContext();
-                const lastMessage = context.chat[context.chat.length - 1];
+    // --- SillyTavern 上下文 ---
+    // 我们将在 onready 钩子中获取这些变量
+    let stContext = null;
 
-                if (!lastMessage || lastMessage.is_user) {
-                    return;
-                }
+    // --- 核心函数 ---
 
-                const messageText = lastMessage.mes;
-                console.log(`${PLUGIN_NAME} 收到新消息，正在根据特定规则检查其完整性...`);
-                
-                if (this.isMessageIncomplete(messageText)) {
-                    console.warn(`${PLUGIN_NAME} 检测到不完整的回复（未能匹配规则），将在1秒后触发自动重生成...`);
-                    console.warn(`不完整的回复内容: "${messageText}"`);
+    function log(level, message) {
+        console[level](`[EnhancedAutoRetry] ${message}`);
+    }
 
-                    await new Promise(resolve => setTimeout(resolve, 1000));
-                    
-                    if (typeof regenerateLastMessage === 'function') {
-                        regenerateLastMessage();
-                    } else {
-                        console.error(`${PLUGIN_NAME} 错误：无法找到 'regenerateLastMessage' 函数。`);
-                    }
-                } else {
-                    console.log(`${PLUGIN_NAME} 消息内容完整，匹配成功。`);
-                }
-
-            } catch (error)
-            {
-                console.error(`${PLUGIN_NAME} 在处理消息时发生错误:`, error);
-            }
-        },
-
-        /**
-         * 【核心规则函数】
-         * 检查消息是否不完整的核心函数。
-         */
-        isMessageIncomplete(message) {
-            const completenessPattern = /<\/content>.*<\/tableEdit>/s;
-            return !completenessPattern.test(message);
+    function notify(title, message) {
+        // SillyTavern 有内置的通知系统
+        if (stContext && stContext.Toast) {
+            stContext.Toast.info(message, title);
+        } else {
+            log('log', `[通知] ${title}: ${message}`);
         }
-    };
+    }
 
-    // 在这个安全的沙盒环境中，我们现在可以毫无问题地调用 init 方法。
-    AutoRegeneratePlugin.init();
+    function clickRegenerate(callback) {
+        // SillyTavern 中重新生成的按钮ID是 'send_regenerate'
+        const btn = document.querySelector('#send_regenerate');
+        if (btn && !btn.disabled) {
+            setTimeout(() => {
+                btn.click();
+                log('log', '已点击 #send_regenerate 按钮');
+                if (typeof callback === 'function') callback();
+            }, retryDelay);
+        } else {
+            log('warn', '未找到或无法点击重新生成按钮 #send_regenerate');
+            isHandlingFailure = false; // 解锁，因为无法进行下一步操作
+            if (typeof callback === 'function') callback();
+        }
+    }
 
-})(); // 立即执行这个函数
+    function handleAutoRetry(reason = "未知错误") {
+        if (isHandlingFailure) {
+            log('log', `正在处理上一次失败，已忽略新的错误报告: "${reason}"`);
+            return;
+        }
+
+        // --- 上锁！---
+        isHandlingFailure = true;
+        failCount++;
+
+        log('warn', `原因: "${reason}"。这是第 ${failCount} 次失败。`);
+
+        if (failCount >= maxFails) {
+            log('error', `已达到最大失败次数 (${maxFails})。脚本已停止重试。`);
+            notify('自动重试已停止', `已连续失败 ${failCount} 次，脚本已停止重试。`);
+            // 可以在这里选择重置 failCount 或让用户手动重置
+        } else {
+            log('log', `准备进行下一次重试...`);
+            notify(`自动重试 #${failCount}`, `原因: ${reason}。将在 ${retryDelay / 1000} 秒后重试。`);
+            clickRegenerate();
+        }
+    }
+
+    // --- 插件生命周期与监听器 ---
+
+    SillyTavern.extension.hooks.on('before-fetch', (request) => {
+        const url = new URL(request.url, window.location.origin);
+        if (!url.pathname.includes(targetApiUrl)) {
+            return request;
+        }
+
+        log('log', '检测到新的API请求，重置失败处理锁。');
+        isHandlingFailure = false;
+
+        // 为请求添加超时逻辑
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), requestTimeout);
+        request.signal = controller.signal;
+
+        request.context.enhancedAutoRetry = { timeoutId }; // 将timeoutId存入上下文，以便之后清除
+
+        return request;
+    });
+
+    SillyTavern.extension.hooks.on('after-fetch', (request, response) => {
+        const url = new URL(request.url, window.location.origin);
+        if (!url.pathname.includes(targetApiUrl)) {
+            return response;
+        }
+        
+        const { timeoutId } = request.context.enhancedAutoRetry;
+        clearTimeout(timeoutId);
+
+        log('log', `拦截到API请求: ${url.pathname}, 状态码: ${response.status}`);
+        if (!response.ok) {
+            handleAutoRetry(`API响应状态码为 ${response.status}`);
+        } else {
+            if (failCount > 0) {
+                log('log', 'API 请求成功，重置失败计数。');
+                notify('重试成功', `API请求在第 ${failCount + 1} 次尝试后成功。`);
+                failCount = 0;
+            }
+        }
+        return response;
+    });
+
+    SillyTavern.extension.hooks.on('fetch-error', (request, error) => {
+        const url = new URL(request.url, window.location.origin);
+        if (!url.pathname.includes(targetApiUrl)) {
+            return;
+        }
+
+        const { timeoutId } = request.context.enhancedAutoRetry;
+        clearTimeout(timeoutId);
+
+        if (error.name === 'AbortError') {
+            handleAutoRetry(`请求超时 (超过 ${requestTimeout / 1000} 秒)`);
+        } else {
+            log('error', `Fetch 请求异常: ${error.message}`);
+            handleAutoRetry('Fetch 请求异常');
+        }
+    });
+
+    // 监听SillyTavern的事件来处理其他错误
+    SillyTavern.extension.events.on('stream-stopped-error', () => handleAutoRetry('API流式传输错误'));
+    SillyTavern.extension.events.on('generation-failed', () => handleAutoRetry('生成失败事件'));
+    
+    // 监听全局未捕获的错误
+    window.addEventListener("error", () => handleAutoRetry('全局JS错误'));
+    window.addEventListener("unhandledrejection", () => handleAutoRetry('Promise未处理异常'));
+
+    // 插件加载完成后的初始化
+    SillyTavern.extension.on('ready', (context) => {
+        stContext = context;
+        const settings = context.getSettings();
+
+        // 从设置中加载用户配置
+        maxFails = settings.max_fails || maxFails;
+        retryDelay = settings.retry_delay || retryDelay;
+        requestTimeout = settings.request_timeout || requestTimeout;
+        targetApiUrl = settings.target_api_url || targetApiUrl;
+
+        log('log', '✅ 插件已启用 (v1.0.0)');
+        log('log', `配置 -> 最大失败: ${maxFails}, 延迟: ${retryDelay}ms, 超时: ${requestTimeout}ms`);
+    });
+
+})();
