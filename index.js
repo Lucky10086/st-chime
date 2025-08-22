@@ -1,74 +1,83 @@
 /**
- * SillyTavern - onSuccess 原始数据捕获插件 (最终版)
+ * SillyTavern - onSuccess 原始数据捕获插件 (事件驱动最终版)
  *
- * 核心逻辑：
- * 1. SillyTavern 的核心函数 onSuccess 不是立即全局可用的。它需要等待页面文档加载完毕后才被赋值给 window.onSuccess。
- * 2. 本插件启动后，会使用一个定时器 (setInterval) 反复检查 `window.onSuccess` 是否已经存在。
- * 3. 一旦发现 `window.onSuccess` 存在，插件就会立刻停止检查，并执行“猴子补丁”(Monkey-Patching)操作。
- * 4. “猴子补丁”操作：
- *    a. 将原始的 `window.onSuccess` 函数保存到一个临时变量中。
- *    b. 用我们自己编写的一个新函数来替换掉 `window.onSuccess`。
- *    c. 我们这个新函数的功能是：首先，打印出它接收到的 `data` 参数（这正是我们的目标！）；然后，调用之前保存的那个原始函数，并将 `data` 原封不动地传给它，以保证 SillyTavern 的所有功能都正常运行。
+ * 核心思路：
+ * 1. 完全采纳用户的正确思路：抛弃不稳定的定时器，使用可靠的事件驱动模型。
+ * 2. 使用已被证明可以被 SillyTavern 成功加载的插件结构作为基础。
+ * 3. 监听一个在应用初始化后期才会触发的关键事件：`CHARACTER_LOADED`。
+ * 4. 当 `CHARACTER_LOADED` 事件被触发时，我们知道此时 `window.onSuccess` 必定已经准备就绪。
+ * 5. 在该事件的处理函数中，执行一次性的“猴子补丁”操作，以拦截 `onSuccess` 的数据。
  */
-(function () {
-    const PLUGIN_NAME = "[原始数据捕获插件]";
-    const MAX_WAIT_TIME = 20000; // 最长等待20秒，如果还没找到就放弃
-    const POLL_INTERVAL = 100;   // 每100毫秒检查一次
 
-    let totalWaitTime = 0;
+// 保留此 import 以确保插件加载方式的正确性。
+import { eventSource, event_types } from "../../../../script.js";
 
-    // 使用 jQuery(document).ready 来确保至少 DOM 是加载完了的
-    jQuery(document).ready(function() {
-        console.log(`${PLUGIN_NAME} 插件已加载。开始等待 SillyTavern 核心函数 'onSuccess' 准备就绪...`);
-
-        // 启动定时器，持续检查目标函数是否可用
-        const readyCheckInterval = setInterval(() => {
-            if (typeof window.onSuccess === 'function') {
-                // 找到了！目标已准备就绪
-                clearInterval(readyCheckInterval); // 停止检查
-                console.log(`${PLUGIN_NAME} 成功找到 'window.onSuccess' 函数。准备执行拦截操作...`);
-                applyInterceptor(); // 执行核心的拦截功能
-            } else {
-                // 还没找到，继续等待
-                totalWaitTime += POLL_INTERVAL;
-                if (totalWaitTime >= MAX_WAIT_TIME) {
-                    clearInterval(readyCheckInterval); // 等待超时，停止检查
-                    console.error(`${PLUGIN_NAME} 错误：等待超时！未能找到 'window.onSuccess' 函数。插件无法工作。请检查 SillyTavern 版本或是否有其他插件冲突。`);
-                }
-            }
-        }, POLL_INTERVAL);
-    });
+const DataCaptureEventDrivenPlugin = {
+    // 添加一个标志位，确保我们的拦截逻辑只执行一次。
+    isInitialized: false,
 
     /**
-     * 应用拦截器的核心函数
+     * 插件的初始化入口。
      */
-    function applyInterceptor() {
-        // 1. 将原始的 onSuccess 函数保存起来
-        const originalOnSuccess = window.onSuccess;
+    init() {
+        // 使用 jQuery(document).ready 是一个好习惯，确保 DOM 结构已加载。
+        jQuery(() => {
+            const PLUGIN_NAME = "[事件驱动数据捕获插件]";
 
-        // 2. 用我们自己的异步函数覆盖全局的 onSuccess
-        window.onSuccess = async function(data) {
-            // 3. 拦截成功！在这里，我们终于拿到了梦寐以求的原始 data 对象
-            console.groupCollapsed(
-                `%c${PLUGIN_NAME} 成功拦截到 'onSuccess' 的原始数据！`,
-                "background-color: #8E44AD; color: white; padding: 4px 8px; border-radius: 4px; font-weight: bold;"
-            );
-            console.log("这是从 API 返回的、未经任何处理的原始数据对象:");
-            console.log(data); // <--- 这里就是最终的数据！
-            console.groupEnd();
-
-            // 4. 【至关重要】调用原始的函数，并将参数原封不动地传过去。
-            // 必须使用 await 并返回其结果，否则会破坏 SillyTavern 的正常流程。
-            try {
-                return await originalOnSuccess.apply(this, arguments);
-            } catch (error) {
-                console.error(`${PLUGIN_NAME} 在执行原始 onSuccess 函数时捕获到一个错误:`, error);
-                // 将错误重新抛出，以便 SillyTavern 的其他部分可以处理它
-                throw error;
+            // 检查核心事件对象是否存在，以防万一。
+            if (typeof eventSource !== 'undefined' && typeof event_types !== 'undefined') {
+                console.log(`${PLUGIN_NAME} 初始化成功。正在监听 '角色加载完成' 事件...`);
+                
+                // 绑定我们的处理函数到 CHARACTER_LOADED 事件上。
+                // 当角色加载完毕，应用准备就绪时，这个函数就会被调用。
+                eventSource.on(event_types.CHARACTER_LOADED, this.onCharacterLoaded.bind(this));
+            } else {
+                console.error(`${PLUGIN_NAME} 错误：无法找到 eventSource 或 event_types 对象。插件无法工作。`);
             }
-        };
+        });
+    },
 
-        console.log(`${PLUGIN_NAME} 拦截器已成功应用。现在，每次 AI 回复时都将自动捕获其原始数据。`);
+    /**
+     * 当 'CHARACTER_LOADED' 事件触发时，此函数被调用。
+     * 这是我们执行拦截操作的最佳时机。
+     */
+    onCharacterLoaded() {
+        const PLUGIN_NAME = "[事件驱动数据捕获插件]";
+
+        // 使用标志位，确保无论事件触发多少次，我们的核心逻辑只运行一次。
+        if (this.isInitialized) {
+            return;
+        }
+        this.isInitialized = true; // 设置标志位，防止重复执行
+
+        console.log(`${PLUGIN_NAME} '角色加载完成' 事件已触发。开始拦截 'onSuccess' 函数...`);
+
+        // 在这个时间点，我们可以100%确定 window.onSuccess 已经存在。
+        if (typeof window.onSuccess === 'function') {
+            // 1. 保存对原始 `onSuccess` 函数的引用
+            const originalOnSuccess = window.onSuccess;
+
+            // 2. 用我们自己的新函数来覆盖全局的 `window.onSuccess`
+            window.onSuccess = async function(data) {
+                // 3. 拦截成功！打印捕获到的原始 data 对象
+                console.groupCollapsed(
+                    `%c${PLUGIN_NAME} 成功捕获到 'onSuccess' 的原始数据！`,
+                    "background-color: #4CAF50; color: white; padding: 4px 8px; border-radius: 4px; font-weight: bold;"
+                );
+                console.log("这是从 API 直接返回的、未经处理的原始数据对象:");
+                console.log(data); // <--- 这里就是您要的最终数据！
+                console.groupEnd();
+
+                // 4. 调用原始函数，确保 SillyTavern 正常运行。
+                return await originalOnSuccess.apply(this, arguments);
+            };
+
+            console.log(`${PLUGIN_NAME} 拦截器已成功应用。`);
+        } else {
+            console.error(`${PLUGIN_NAME} 错误：在 '角色加载完成' 后依然未能找到 'window.onSuccess' 函数。拦截失败。`);
+        }
     }
+};
 
-})(); // 使用立即执行函数表达式，避免污染全局变量
+// 运行插件
+DataCaptureEventDrivenPlugin.init();
